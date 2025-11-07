@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Mimic Ship</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+      font-family: Arial, sans-serif;
+    }
+    #video {
+      display: none;
+    }
+    #gameCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    #startScreen, #gameOverScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.9);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      z-index: 10;
+      text-align: center;
+      padding: 20px;
+    }
+    #gameOverScreen {
+      display: none;
+    }
+    button {
+      margin-top: 20px;
+      padding: 12px 30px;
+      font-size: 18px;
+      background: #0ff;
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0cc;
+    }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline muted></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="startScreen">
+    <h1>🚀 Mimic Ship</h1>
+    <p>Управляй кораблём мимикой!<br>Поднимай брови, чтобы лететь вверх.</p>
+    <button id="startBtn">Разрешить камеру и начать</button>
+  </div>
+
+  <div id="gameOverScreen">
+    <h2>💥 Игра окончена!</h2>
+    <p>Подними брови повыше, чтобы начать заново.</p>
+  </div>
+
+  <!-- Загрузка MediaPipe (БЕЗ ЛИШНИХ ПРОБЕЛОВ!) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const startScreen = document.getElementById('startScreen');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const startBtn = document.getElementById('startBtn');
+
+    // Адаптация под размер экрана
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Параметры корабля
+    const ship = {
+      x: 100,
+      y: canvas.height / 2,
+      radius: 20,
+      alive: true
+    };
+
+    let obstacles = [];
+    let faceMesh;
+    let camera;
+    let eyebrowRaiseValue = 0.045; // нейтральное значение
+    let gameActive = false; // активна ли игра
+
+    // Инициализация FaceMesh
+    function initFaceMesh() {
+      faceMesh = new FaceMesh({
+        locateFile: (file) => {
+          // ✅ Правильный URL — без пробелов!
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+        }
+      });
+
+      faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      faceMesh.onResults(onFaceResults);
+    }
+
+    // Обработка результатов с камеры
+    function onFaceResults(results) {
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+        // Точки бровей
+        const leftTop = landmarks[105];
+        const leftBottom = landmarks[66];
+        const rightTop = landmarks[334];
+        const rightBottom = landmarks[296];
+
+        const leftRaise = leftBottom.y - leftTop.y;
+        const rightRaise = rightBottom.y - rightTop.y;
+        eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
+
+        // Если игрок мёртв, но поднял брови — перезапуск
+        if (!ship.alive && eyebrowRaiseValue > 0.07) {
+          resetGame();
+        }
+      }
+    }
+
+    // Обновление позиции корабля
+    function updateShip() {
+      if (!ship.alive) return;
+      const sensitivity = 800;
+      const neutral = 0.045;
+      const targetY = canvas.height / 2 - (eyebrowRaiseValue - neutral) * sensitivity;
+      ship.y = ship.y * 0.8 + targetY * 0.2; // плавное движение
+      ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
+    }
+
+    // Генерация препятствий
+    function spawnObstacle() {
+      if (Math.random() < 0.03 && ship.alive) {
+        const gap = 150;
+        const topHeight = Math.random() * (canvas.height - gap - 100) + 50;
+        obstacles.push({
+          x: canvas.width,
+          topY: 0,
+          topHeight: topHeight,
+          bottomY: topHeight + gap,
+          bottomHeight: canvas.height - (topHeight + gap),
+          width: 40
+        });
+      }
+    }
+
+    // Проверка столкновения
+    function checkCollision(obs) {
+      const shipLeft = ship.x - ship.radius;
+      const shipRight = ship.x + ship.radius;
+      const shipTop = ship.y - ship.radius;
+      const shipBottom = ship.y + ship.radius;
+
+      const obsLeft = obs.x;
+      const obsRight = obs.x + obs.width;
+
+      if (shipRight > obsLeft && shipLeft < obsRight) {
+        if (shipTop < obs.topHeight || shipBottom > obs.bottomY) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Основной игровой цикл
+    function gameLoop() {
+      if (!gameActive) return;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      updateShip();
+      spawnObstacle();
+
+      // Рисуем корабль
+      ctx.fillStyle = '#0ff';
+      ctx.beginPath();
+      ctx.arc(ship.x, ship.y, ship.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Рисуем и обновляем препятствия
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obs = obstacles[i];
+        obs.x -= 6;
+
+        ctx.fillStyle = '#f55';
+        ctx.fillRect(obs.x, obs.topY, obs.width, obs.topHeight);
+        ctx.fillRect(obs.x, obs.bottomY, obs.width, obs.bottomHeight);
+
+        if (checkCollision(obs)) {
+          ship.alive = false;
+          gameOverScreen.style.display = 'flex';
+          gameActive = false;
+          return;
+        }
+
+        // Удаляем ушедшие препятствия
+        if (obs.x + obs.width < 0) {
+          obstacles.splice(i, 1);
+        }
+      }
+
+      if (ship.alive) {
+        requestAnimationFrame(gameLoop);
+      }
+    }
+
+    // Перезапуск игры
+    function resetGame() {
+      ship.y = canvas.height / 2;
+      ship.alive = true;
+      obstacles = [];
+      gameOverScreen.style.display = 'none';
+      gameActive = true;
+      gameLoop();
+    }
+
+    // Начало игры по клику
+    startBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+
+        startScreen.style.display = 'none';
+        initFaceMesh();
+
+        // Запуск камеры
+        camera = new Camera(video, {
+          onFrame: async () => {
+            await faceMesh.send({ image: video });
+          },
+          width: 320,
+          height: 240
+        });
+        camera.start();
+
+        // Небольшая задержка, чтобы камера стартовала
+        setTimeout(() => {
+          gameActive = true;
+          gameLoop();
+        }, 800);
+      } catch (err) {
+        alert('Не удалось получить доступ к камере: ' + (err.message || 'разрешите доступ и обновите страницу'));
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>
