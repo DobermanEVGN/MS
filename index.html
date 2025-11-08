@@ -56,25 +56,11 @@
     button:hover {
       background: #0cc;
     }
-    #debugDiv {
-      position: fixed;
-      top: 10px;
-      left: 10px;
-      color: #0ff;
-      background: rgba(0,0,0,0.7);
-      padding: 6px 10px;
-      font-family: monospace;
-      font-size: 14px;
-      z-index: 999;
-      border-radius: 4px;
-      display: none; /* скроем от пользователей, но оставим для отладки при необходимости */
-    }
   </style>
 </head>
 <body>
   <video id="video" playsinline muted></video>
   <canvas id="gameCanvas"></canvas>
-  <div id="debugDiv"></div>
 
   <div id="startScreen">
     <h1>🚀 Mimic Ship</h1>
@@ -99,7 +85,6 @@
     const gameOverScreen = document.getElementById('gameOverScreen');
     const startBtn = document.getElementById('startBtn');
     const restartBtn = document.getElementById('restartBtn');
-    const debugDiv = document.getElementById('debugDiv');
 
     function resize() {
       canvas.width = window.innerWidth;
@@ -108,21 +93,22 @@
     window.addEventListener('resize', resize);
     resize();
 
+    const shipRadius = 20;
+    const minGap = shipRadius * 4; // минимум 4× радиус = 2× диаметр (80px)
+
     const ship = {
       x: 100,
       y: canvas.height / 2,
-      radius: 20,
+      radius: shipRadius,
       alive: true
     };
 
     let obstacles = [];
     let faceMesh;
     let camera;
-    let eyebrowRaiseValue = 0.0; // будет обновляться в реальном времени
+    let eyebrowRaiseValue = 0.0;
+    let neutralEyebrow = 0.035;
     let gameActive = false;
-    let neutralEyebrow = 0.035; // базовое значение, подстраиваемое
-
-    // Флаг для калибровки при старте (опционально)
     let calibrated = false;
     let calibrationSamples = [];
     let calibrationCount = 0;
@@ -147,17 +133,11 @@
     function onFaceResults(results) {
       if (results.multiFaceLandmarks?.[0]) {
         const lm = results.multiFaceLandmarks[0];
-
-        // Используем улучшенные точки
-        const leftRaise = lm[70].y - lm[55].y;   // ВЕРХ - НИЗ = положительное при поднятии
+        // Правильный порядок: верх - низ → положительное = поднятие
+        const leftRaise = lm[70].y - lm[55].y;
         const rightRaise = lm[300].y - lm[285].y;
         eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
 
-        // Отладка (можно включить, если нужно)
-        // debugDiv.textContent = `Raise: ${eyebrowRaiseValue.toFixed(4)}`;
-        // debugDiv.style.display = 'block';
-
-        // Автокалибровка первых 30 кадров (500 мс)
         if (!calibrated && calibrationCount < 30) {
           calibrationSamples.push(eyebrowRaiseValue);
           calibrationCount++;
@@ -168,7 +148,7 @@
         }
 
         // Перезапуск по мимике
-        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.03) {
+        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.025) {
           resetGame();
         }
       }
@@ -177,26 +157,29 @@
     function updateShip() {
       if (!ship.alive) return;
 
-      // Теперь: чем БОЛЬШЕ eyebrowRaiseValue — тем ВЫШЕ корабль
-      const sensitivity = 1200; // высокая чувствительность
+      // МАКСИМАЛЬНАЯ чувствительность!
+      const sensitivity = 2000; // было 1200 → теперь 2000!
       const offset = eyebrowRaiseValue - neutralEyebrow;
       const targetY = canvas.height / 2 - offset * sensitivity;
 
-      // Плавное следование
-      ship.y += (targetY - ship.y) * 0.2;
+      // Почти мгновенная реакция (коэффициент 0.4 вместо 0.2)
+      ship.y += (targetY - ship.y) * 0.4;
       ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
     }
 
     function spawnObstacle() {
-      if (Math.random() < 0.03 && ship.alive) {
-        const gap = 180; // чуть шире для удобства
-        const topHeight = Math.random() * (canvas.height - gap - 100) + 50;
+      if (Math.random() < 0.035 && ship.alive) { // чуть чаще
+        const minHeight = 50;
+        const maxHeight = canvas.height - minHeight - minGap;
+        if (maxHeight <= minHeight) return; // защита от маленьких экранов
+
+        const topHeight = Math.random() * (maxHeight - minHeight) + minHeight;
         obstacles.push({
           x: canvas.width,
           topY: 0,
           topHeight: topHeight,
-          bottomY: topHeight + gap,
-          bottomHeight: canvas.height - (topHeight + gap),
+          bottomY: topHeight + minGap,
+          bottomHeight: canvas.height - (topHeight + minGap),
           width: 50
         });
       }
@@ -236,7 +219,7 @@
       // Препятствия
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
-        obs.x -= 6;
+        obs.x -= 7; // чуть быстрее
 
         ctx.fillStyle = '#f55';
         ctx.fillRect(obs.x, obs.topY, obs.width, obs.topHeight);
