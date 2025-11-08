@@ -94,7 +94,7 @@
     resize();
 
     const shipRadius = 20;
-    const minGap = shipRadius * 4; // минимум 4× радиус = 2× диаметр (80px)
+    const minGap = 90; // ≥ 2× диаметр корабля (40px) → 90px с запасом
 
     const ship = {
       x: 100,
@@ -133,22 +133,21 @@
     function onFaceResults(results) {
       if (results.multiFaceLandmarks?.[0]) {
         const lm = results.multiFaceLandmarks[0];
-        // Правильный порядок: верх - низ → положительное = поднятие
-        const leftRaise = lm[70].y - lm[55].y;
+        // Проверка: используем надёжные точки
+        const leftRaise = lm[70].y - lm[55].y;   // верх - низ
         const rightRaise = lm[300].y - lm[285].y;
         eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
 
-        if (!calibrated && calibrationCount < 30) {
+        if (!calibrated && calibrationCount < 20) {
           calibrationSamples.push(eyebrowRaiseValue);
           calibrationCount++;
-          if (calibrationCount === 30) {
+          if (calibrationCount === 20) {
             neutralEyebrow = calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length;
             calibrated = true;
           }
         }
 
-        // Перезапуск по мимике
-        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.025) {
+        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.03) {
           resetGame();
         }
       }
@@ -157,32 +156,36 @@
     function updateShip() {
       if (!ship.alive) return;
 
-      // МАКСИМАЛЬНАЯ чувствительность!
-      const sensitivity = 2000; // было 1200 → теперь 2000!
+      // Сбалансированная чувствительность
+      const sensitivity = 1000;
       const offset = eyebrowRaiseValue - neutralEyebrow;
       const targetY = canvas.height / 2 - offset * sensitivity;
 
-      // Почти мгновенная реакция (коэффициент 0.4 вместо 0.2)
-      ship.y += (targetY - ship.y) * 0.4;
+      // Плавное, но откликающееся движение
+      ship.y += (targetY - ship.y) * 0.25;
       ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
     }
 
     function spawnObstacle() {
-      if (Math.random() < 0.035 && ship.alive) { // чуть чаще
-        const minHeight = 50;
-        const maxHeight = canvas.height - minHeight - minGap;
-        if (maxHeight <= minHeight) return; // защита от маленьких экранов
+      if (!ship.alive || Math.random() >= 0.025) return; // чуть реже
 
-        const topHeight = Math.random() * (maxHeight - minHeight) + minHeight;
-        obstacles.push({
-          x: canvas.width,
-          topY: 0,
-          topHeight: topHeight,
-          bottomY: topHeight + minGap,
-          bottomHeight: canvas.height - (topHeight + minGap),
-          width: 50
-        });
-      }
+      const availableHeight = canvas.height - minGap;
+      if (availableHeight < 100) return; // защита: экран слишком мал
+
+      // Минимальные отступы сверху и снизу — 40px
+      const minTop = 40;
+      const maxTop = availableHeight - 40;
+      if (maxTop <= minTop) return;
+
+      const topHeight = Math.random() * (maxTop - minTop) + minTop;
+      obstacles.push({
+        x: canvas.width,
+        topY: 0,
+        topHeight: topHeight,
+        bottomY: topHeight + minGap,
+        bottomHeight: canvas.height - (topHeight + minGap),
+        width: 45
+      });
     }
 
     function checkCollision(obs) {
@@ -219,7 +222,7 @@
       // Препятствия
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
-        obs.x -= 7; // чуть быстрее
+        obs.x -= 5; // умеренная скорость
 
         ctx.fillStyle = '#f55';
         ctx.fillRect(obs.x, obs.topY, obs.width, obs.topHeight);
@@ -269,7 +272,7 @@
 
         camera = new Camera(video, {
           onFrame: async () => {
-            if (video.videoWidth > 0) {
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
               await faceMesh.send({ image: video });
             }
           },
@@ -283,7 +286,7 @@
           gameLoop();
         }, 1000);
       } catch (err) {
-        alert('Ошибка камеры: разрешите доступ и обновите страницу.');
+        alert('Не удалось получить доступ к камере. Разрешите доступ и обновите страницу.');
         console.error(err);
       }
     });
