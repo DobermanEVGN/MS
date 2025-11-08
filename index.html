@@ -95,7 +95,7 @@
 
     const shipRadius = 20;
     const minGap = 90;
-    const obstacleSpacing = 400; // Увеличенное расстояние между препятствиями
+    const obstacleSpacing = 400;
 
     const ship = {
       x: 100,
@@ -109,7 +109,6 @@
     let faceMesh;
     let camera;
     let eyebrowRaiseValue = 0.0;
-    let faceHeight = 0;
     let neutralEyebrow = 0.035;
     let gameActive = false;
     let calibrated = false;
@@ -138,18 +137,10 @@
       if (results.multiFaceLandmarks?.[0]) {
         const lm = results.multiFaceLandmarks[0];
         
-        // Вычисляем высоту лица для относительного определения поднятия бровей
-        const chinY = lm[152].y; // точка подбородка
-        const foreheadY = lm[10].y; // точка лба
-        faceHeight = Math.abs(foreheadY - chinY);
-        
-        // Поднятие бровей относительно высоты лица
-        const leftEyebrow = (lm[70].y + lm[55].y) / 2; // средняя точка левой брови
-        const rightEyebrow = (lm[300].y + lm[285].y) / 2; // средняя точка правой брови
-        const eyebrowsY = (leftEyebrow + rightEyebrow) / 2;
-        
-        // Относительное положение бровей (чем меньше значение - тем выше брови)
-        eyebrowRaiseValue = (eyebrowsY - foreheadY) / faceHeight;
+        // Простая и надежная детекция поднятия бровей
+        const leftRaise = Math.abs(lm[70].y - lm[55].y);
+        const rightRaise = Math.abs(lm[300].y - lm[285].y);
+        eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
 
         if (!calibrated && calibrationCount < 20) {
           calibrationSamples.push(eyebrowRaiseValue);
@@ -157,10 +148,11 @@
           if (calibrationCount === 20) {
             neutralEyebrow = calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length;
             calibrated = true;
+            console.log('Calibrated neutral eyebrow:', neutralEyebrow);
           }
         }
 
-        if (!ship.alive && eyebrowRaiseValue < neutralEyebrow - 0.05) {
+        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.03) {
           resetGame();
         }
       }
@@ -169,38 +161,43 @@
     function updateShip() {
       if (!ship.alive) return;
 
-      // Физика корабля: поднятие бровей создаёт подъёмную силу, но есть "гравитация"
-      const eyebrowInput = Math.max(0, (neutralEyebrow - eyebrowRaiseValue) * 5); // 0-1 значение поднятия бровей
+      // Упрощенная и более отзывчивая физика
+      const eyebrowInput = Math.max(0, (eyebrowRaiseValue - neutralEyebrow) * 50);
       
-      // Подъёмная сила при поднятии бровей
-      const liftForce = eyebrowInput * 0.8;
+      // Сильная подъемная сила (в 2 раза сильнее гравитации)
+      const liftForce = eyebrowInput * 1.2;
       
-      // Гравитация (постоянная сила вниз)
-      const gravity = 0.4;
+      // Гравитация (слабее подъемной силы)
+      const gravity = 0.6;
       
-      // Обновление скорости: подъёмная сила против гравитации
+      // Обновление скорости
       ship.velocity += gravity - liftForce;
       
-      // Ограничение максимальной скорости
-      ship.velocity = Math.max(-8, Math.min(8, ship.velocity));
+      // Ограничение скорости
+      ship.velocity = Math.max(-12, Math.min(12, ship.velocity));
       
-      // Применение скорости к позиции
+      // Применение скорости
       ship.y += ship.velocity;
       
       // Границы экрана
       ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
       
-      // Демпфирование для плавности
-      ship.velocity *= 0.95;
+      // Легкое демпфирование для плавности
+      ship.velocity *= 0.98;
+      
+      // Отладочная информация
+      if (Math.random() < 0.01) {
+        console.log('Eyebrow:', eyebrowRaiseValue.toFixed(4), 'Neutral:', neutralEyebrow.toFixed(4), 'Input:', eyebrowInput.toFixed(2), 'Velocity:', ship.velocity.toFixed(2));
+      }
     }
 
     function spawnObstacle() {
       if (!ship.alive) return;
       
       // Проверяем расстояние от последнего препятствия
-      if (canvas.width - lastObstacleX < obstacleSpacing) return;
+      if (lastObstacleX > 0 && canvas.width - lastObstacleX < obstacleSpacing) return;
       
-      // Случайный шанс появления, но с учётом расстояния
+      // Случайный шанс появления
       if (Math.random() >= 0.02) return;
 
       const availableHeight = canvas.height - minGap;
@@ -257,7 +254,7 @@
       // Препятствия
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
-        obs.x -= 5; // умеренная скорость
+        obs.x -= 5;
 
         ctx.fillStyle = '#f55';
         ctx.fillRect(obs.x, obs.topY, obs.width, obs.topHeight);
