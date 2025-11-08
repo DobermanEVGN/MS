@@ -56,11 +56,23 @@
     button:hover {
       background: #0cc;
     }
+    #debug {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      z-index: 100;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
   <video id="video" playsinline muted></video>
   <canvas id="gameCanvas"></canvas>
+  <div id="debug"></div>
 
   <div id="startScreen">
     <h1>🚀 Mimic Ship</h1>
@@ -85,6 +97,7 @@
     const gameOverScreen = document.getElementById('gameOverScreen');
     const startBtn = document.getElementById('startBtn');
     const restartBtn = document.getElementById('restartBtn');
+    const debug = document.getElementById('debug');
 
     function resize() {
       canvas.width = window.innerWidth;
@@ -108,8 +121,8 @@
     let obstacles = [];
     let faceMesh;
     let camera;
-    let eyebrowRaiseValue = 0.0;
-    let neutralEyebrow = 0.035;
+    let eyebrowRaiseLevel = 0.0;
+    let neutralEyebrow = 0.0;
     let gameActive = false;
     let calibrated = false;
     let calibrationSamples = [];
@@ -135,46 +148,70 @@
 
     function onFaceResults(results) {
       if (results.multiFaceLandmarks?.[0]) {
-        const lm = results.multiFaceLandmarks[0];
+        const landmarks = results.multiFaceLandmarks[0];
         
-        // Простая и надежная детекция поднятия бровей
-        const leftRaise = Math.abs(lm[70].y - lm[55].y);
-        const rightRaise = Math.abs(lm[300].y - lm[285].y);
-        eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
+        // Используем более надежные точки для детекции бровей
+        // Левые точки брови: 55, 65, 52, 53, 46
+        // Правые точки брови: 285, 295, 282, 283, 276
+        
+        // Вычисляем среднюю Y-координату для левой брови
+        const leftEyebrowPoints = [55, 65, 52, 53, 46];
+        const leftEyebrowY = leftEyebrowPoints.reduce((sum, index) => sum + landmarks[index].y, 0) / leftEyebrowPoints.length;
+        
+        // Вычисляем среднюю Y-координату для правой брови
+        const rightEyebrowPoints = [285, 295, 282, 283, 276];
+        const rightEyebrowY = rightEyebrowPoints.reduce((sum, index) => sum + landmarks[index].y, 0) / rightEyebrowPoints.length;
+        
+        // Средняя высота бровей (чем меньше значение - тем выше брови)
+        const averageEyebrowY = (leftEyebrowY + rightEyebrowY) / 2;
+        
+        // Нос как референсная точка
+        const noseTipY = landmarks[1].y;
+        
+        // Относительное положение бровей относительно носа
+        eyebrowRaiseLevel = noseTipY - averageEyebrowY;
 
-        if (!calibrated && calibrationCount < 20) {
-          calibrationSamples.push(eyebrowRaiseValue);
+        if (!calibrated && calibrationCount < 30) {
+          calibrationSamples.push(eyebrowRaiseLevel);
           calibrationCount++;
-          if (calibrationCount === 20) {
+          if (calibrationCount === 30) {
             neutralEyebrow = calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length;
             calibrated = true;
-            console.log('Calibrated neutral eyebrow:', neutralEyebrow);
+            debug.innerHTML = `КАЛИБРОВКА ЗАВЕРШЕНА!<br>Нейтральное: ${neutralEyebrow.toFixed(4)}`;
+          } else {
+            debug.innerHTML = `Калибровка... ${calibrationCount}/30`;
           }
+        } else if (calibrated) {
+          const relativeRaise = eyebrowRaiseLevel - neutralEyebrow;
+          debug.innerHTML = `Брови: ${relativeRaise.toFixed(4)}<br>Нейтральное: ${neutralEyebrow.toFixed(4)}<br>Скорость: ${ship.velocity.toFixed(2)}`;
         }
 
-        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.03) {
+        if (!ship.alive && (eyebrowRaiseLevel - neutralEyebrow) > 0.02) {
           resetGame();
         }
       }
     }
 
     function updateShip() {
-      if (!ship.alive) return;
+      if (!ship.alive || !calibrated) return;
 
-      // Упрощенная и более отзывчивая физика
-      const eyebrowInput = Math.max(0, (eyebrowRaiseValue - neutralEyebrow) * 50);
+      // Вычисляем насколько подняты брови относительно нейтрального положения
+      const eyebrowInput = eyebrowRaiseLevel - neutralEyebrow;
       
-      // Сильная подъемная сила (в 2 раза сильнее гравитации)
-      const liftForce = eyebrowInput * 1.2;
+      // Ограничиваем и усиливаем входное значение
+      const normalizedInput = Math.max(0, Math.min(1, eyebrowInput * 50));
       
-      // Гравитация (слабее подъемной силы)
-      const gravity = 0.6;
+      // Сильная подъемная сила
+      const liftForce = normalizedInput * 1.5;
+      
+      // Слабая гравитация
+      const gravity = 0.4;
       
       // Обновление скорости
       ship.velocity += gravity - liftForce;
       
       // Ограничение скорости
-      ship.velocity = Math.max(-12, Math.min(12, ship.velocity));
+      ship.velocity = Math.max(-15, Math.min(15, ship.velocity));
       
       // Применение скорости
       ship.y += ship.velocity;
@@ -182,13 +219,8 @@
       // Границы экрана
       ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
       
-      // Легкое демпфирование для плавности
-      ship.velocity *= 0.98;
-      
-      // Отладочная информация
-      if (Math.random() < 0.01) {
-        console.log('Eyebrow:', eyebrowRaiseValue.toFixed(4), 'Neutral:', neutralEyebrow.toFixed(4), 'Input:', eyebrowInput.toFixed(2), 'Velocity:', ship.velocity.toFixed(2));
-      }
+      // Легкое демпфирование
+      ship.velocity *= 0.95;
     }
 
     function spawnObstacle() {
