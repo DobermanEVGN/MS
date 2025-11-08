@@ -73,7 +73,6 @@
     <p>Подними брови повыше, чтобы начать заново.</p>
   </div>
 
-  <!-- Загрузка MediaPipe (БЕЗ ЛИШНИХ ПРОБЕЛОВ!) -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 
@@ -85,7 +84,6 @@
     const gameOverScreen = document.getElementById('gameOverScreen');
     const startBtn = document.getElementById('startBtn');
 
-    // Адаптация под размер экрана
     function resize() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -93,7 +91,6 @@
     window.addEventListener('resize', resize);
     resize();
 
-    // Параметры корабля
     const ship = {
       x: 100,
       y: canvas.height / 2,
@@ -104,14 +101,12 @@
     let obstacles = [];
     let faceMesh;
     let camera;
-    let eyebrowRaiseValue = 0.045; // нейтральное значение
-    let gameActive = false; // активна ли игра
+    let eyebrowRaiseValue = 0.03; // понижено! подходит для большинства лиц
+    let gameActive = false;
 
-    // Инициализация FaceMesh
     function initFaceMesh() {
       faceMesh = new FaceMesh({
         locateFile: (file) => {
-          // ✅ Правильный URL — без пробелов!
           return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
         }
       });
@@ -126,38 +121,45 @@
       faceMesh.onResults(onFaceResults);
     }
 
-    // Обработка результатов с камеры
     function onFaceResults(results) {
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
-        // Точки бровей
-        const leftTop = landmarks[105];
-        const leftBottom = landmarks[66];
-        const rightTop = landmarks[334];
-        const rightBottom = landmarks[296];
 
-        const leftRaise = leftBottom.y - leftTop.y;
-        const rightRaise = rightBottom.y - rightTop.y;
+        // Более чувствительные точки бровей (работают лучше на Xiaomi)
+        const leftRaise = landmarks[55].y - landmarks[70].y;  // левая бровь
+        const rightRaise = landmarks[285].y - landmarks[300].y; // правая бровь
         eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
 
-        // Если игрок мёртв, но поднял брови — перезапуск
-        if (!ship.alive && eyebrowRaiseValue > 0.07) {
+        // Отладка: показываем значение на экране
+        if (!window.debugDiv) {
+          window.debugDiv = document.createElement('div');
+          window.debugDiv.style.cssText = `
+            position: fixed; top: 10px; left: 10px;
+            color: #0ff; background: rgba(0,0,0,0.7);
+            padding: 6px 10px; font-family: monospace;
+            font-size: 16px; z-index: 999;
+            border-radius: 4px;
+          `;
+          document.body.appendChild(window.debugDiv);
+        }
+        window.debugDiv.textContent = `Raise: ${eyebrowRaiseValue.toFixed(4)}`;
+
+        // Перезапуск при окончании игры
+        if (!ship.alive && eyebrowRaiseValue > 0.05) {
           resetGame();
         }
       }
     }
 
-    // Обновление позиции корабля
     function updateShip() {
       if (!ship.alive) return;
-      const sensitivity = 800;
-      const neutral = 0.045;
+      const sensitivity = 600; // чуть мягче
+      const neutral = 0.03;    // понижено!
       const targetY = canvas.height / 2 - (eyebrowRaiseValue - neutral) * sensitivity;
-      ship.y = ship.y * 0.8 + targetY * 0.2; // плавное движение
+      ship.y += (targetY - ship.y) * 0.1; // плавное следование
       ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
     }
 
-    // Генерация препятствий
     function spawnObstacle() {
       if (Math.random() < 0.03 && ship.alive) {
         const gap = 150;
@@ -173,7 +175,6 @@
       }
     }
 
-    // Проверка столкновения
     function checkCollision(obs) {
       const shipLeft = ship.x - ship.radius;
       const shipRight = ship.x + ship.radius;
@@ -191,22 +192,20 @@
       return false;
     }
 
-    // Основной игровой цикл
     function gameLoop() {
       if (!gameActive) return;
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       updateShip();
       spawnObstacle();
 
-      // Рисуем корабль
+      // Корабль
       ctx.fillStyle = '#0ff';
       ctx.beginPath();
       ctx.arc(ship.x, ship.y, ship.radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // Рисуем и обновляем препятствия
+      // Препятствия
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
         obs.x -= 6;
@@ -222,7 +221,6 @@
           return;
         }
 
-        // Удаляем ушедшие препятствия
         if (obs.x + obs.width < 0) {
           obstacles.splice(i, 1);
         }
@@ -233,7 +231,6 @@
       }
     }
 
-    // Перезапуск игры
     function resetGame() {
       ship.y = canvas.height / 2;
       ship.alive = true;
@@ -243,32 +240,37 @@
       gameLoop();
     }
 
-    // Начало игры по клику
     startBtn.addEventListener('click', async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: 'user', 
+            width: { ideal: 320 },
+            height: { ideal: 240 }
+          } 
+        });
         video.srcObject = stream;
 
         startScreen.style.display = 'none';
         initFaceMesh();
 
-        // Запуск камеры
         camera = new Camera(video, {
           onFrame: async () => {
-            await faceMesh.send({ image: video });
+            if (video.videoWidth > 0) {
+              await faceMesh.send({ image: video });
+            }
           },
           width: 320,
           height: 240
         });
         camera.start();
 
-        // Небольшая задержка, чтобы камера стартовала
         setTimeout(() => {
           gameActive = true;
           gameLoop();
-        }, 800);
+        }, 1000);
       } catch (err) {
-        alert('Не удалось получить доступ к камере: ' + (err.message || 'разрешите доступ и обновите страницу'));
+        alert('Не удалось получить доступ к камере: ' + (err.message || 'разрешите доступ'));
         console.error(err);
       }
     });
