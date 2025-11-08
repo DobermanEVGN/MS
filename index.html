@@ -108,7 +108,7 @@
 
     const shipRadius = 20;
     const minGap = 90;
-    const obstacleSpacing = 400;
+    const obstacleSpacing = 300; // Уменьшил расстояние между препятствиями
 
     const ship = {
       x: 100,
@@ -128,6 +128,7 @@
     let calibrationSamples = [];
     let calibrationCount = 0;
     let lastObstacleX = 0;
+    let obstacleTimer = 0;
 
     function initFaceMesh() {
       faceMesh = new FaceMesh({
@@ -183,7 +184,7 @@
           }
         } else if (calibrated) {
           const relativeRaise = eyebrowRaiseLevel - neutralEyebrow;
-          debug.innerHTML = `Брови: ${relativeRaise.toFixed(4)}<br>Нейтральное: ${neutralEyebrow.toFixed(4)}<br>Скорость: ${ship.velocity.toFixed(2)}`;
+          debug.innerHTML = `Брови: ${relativeRaise.toFixed(4)}<br>Нейтральное: ${neutralEyebrow.toFixed(4)}<br>Скорость: ${ship.velocity.toFixed(2)}<br>Препятствий: ${obstacles.length}`;
         }
 
         if (!ship.alive && (eyebrowRaiseLevel - neutralEyebrow) > 0.02) {
@@ -226,11 +227,13 @@
     function spawnObstacle() {
       if (!ship.alive) return;
       
+      obstacleTimer++;
+      
+      // Создаем препятствие каждые 60-120 кадров (примерно 1-2 секунды)
+      if (obstacleTimer < 80) return;
+      
       // Проверяем расстояние от последнего препятствия
       if (lastObstacleX > 0 && canvas.width - lastObstacleX < obstacleSpacing) return;
-      
-      // Случайный шанс появления
-      if (Math.random() >= 0.02) return;
 
       const availableHeight = canvas.height - minGap;
       if (availableHeight < 100) return;
@@ -250,6 +253,10 @@
       });
       
       lastObstacleX = canvas.width;
+      obstacleTimer = 0;
+      
+      // Добавляем небольшую случайность в интервал
+      obstacleTimer = -Math.random() * 40;
     }
 
     function checkCollision(obs) {
@@ -315,6 +322,7 @@
       ship.alive = true;
       obstacles = [];
       lastObstacleX = 0;
+      obstacleTimer = 0;
       gameOverScreen.style.display = 'none';
       gameActive = true;
       calibrated = false;
@@ -361,3 +369,4 @@
   </script>
 </body>
 </html>
+
