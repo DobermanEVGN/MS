@@ -56,21 +56,36 @@
     button:hover {
       background: #0cc;
     }
+    #debugDiv {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: #0ff;
+      background: rgba(0,0,0,0.7);
+      padding: 6px 10px;
+      font-family: monospace;
+      font-size: 14px;
+      z-index: 999;
+      border-radius: 4px;
+      display: none; /* скроем от пользователей, но оставим для отладки при необходимости */
+    }
   </style>
 </head>
 <body>
   <video id="video" playsinline muted></video>
   <canvas id="gameCanvas"></canvas>
+  <div id="debugDiv"></div>
 
   <div id="startScreen">
     <h1>🚀 Mimic Ship</h1>
-    <p>Управляй кораблём мимикой!<br>Поднимай брови, чтобы лететь вверх.</p>
+    <p>Поднимай брови → корабль летит вверх!<br>Избегай красных стен.</p>
     <button id="startBtn">Разрешить камеру и начать</button>
   </div>
 
   <div id="gameOverScreen">
     <h2>💥 Игра окончена!</h2>
-    <p>Подними брови повыше, чтобы начать заново.</p>
+    <p>Подними брови или нажми кнопку, чтобы начать заново.</p>
+    <button id="restartBtn">Попробовать снова</button>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
@@ -83,6 +98,8 @@
     const startScreen = document.getElementById('startScreen');
     const gameOverScreen = document.getElementById('gameOverScreen');
     const startBtn = document.getElementById('startBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const debugDiv = document.getElementById('debugDiv');
 
     function resize() {
       canvas.width = window.innerWidth;
@@ -101,8 +118,14 @@
     let obstacles = [];
     let faceMesh;
     let camera;
-    let eyebrowRaiseValue = 0.03; // понижено! подходит для большинства лиц
+    let eyebrowRaiseValue = 0.0; // будет обновляться в реальном времени
     let gameActive = false;
+    let neutralEyebrow = 0.035; // базовое значение, подстраиваемое
+
+    // Флаг для калибровки при старте (опционально)
+    let calibrated = false;
+    let calibrationSamples = [];
+    let calibrationCount = 0;
 
     function initFaceMesh() {
       faceMesh = new FaceMesh({
@@ -122,30 +145,30 @@
     }
 
     function onFaceResults(results) {
-      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
+      if (results.multiFaceLandmarks?.[0]) {
+        const lm = results.multiFaceLandmarks[0];
 
-        // Более чувствительные точки бровей (работают лучше на Xiaomi)
-        const leftRaise = landmarks[55].y - landmarks[70].y;  // левая бровь
-        const rightRaise = landmarks[285].y - landmarks[300].y; // правая бровь
+        // Используем улучшенные точки
+        const leftRaise = lm[70].y - lm[55].y;   // ВЕРХ - НИЗ = положительное при поднятии
+        const rightRaise = lm[300].y - lm[285].y;
         eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
 
-        // Отладка: показываем значение на экране
-        if (!window.debugDiv) {
-          window.debugDiv = document.createElement('div');
-          window.debugDiv.style.cssText = `
-            position: fixed; top: 10px; left: 10px;
-            color: #0ff; background: rgba(0,0,0,0.7);
-            padding: 6px 10px; font-family: monospace;
-            font-size: 16px; z-index: 999;
-            border-radius: 4px;
-          `;
-          document.body.appendChild(window.debugDiv);
-        }
-        window.debugDiv.textContent = `Raise: ${eyebrowRaiseValue.toFixed(4)}`;
+        // Отладка (можно включить, если нужно)
+        // debugDiv.textContent = `Raise: ${eyebrowRaiseValue.toFixed(4)}`;
+        // debugDiv.style.display = 'block';
 
-        // Перезапуск при окончании игры
-        if (!ship.alive && eyebrowRaiseValue > 0.05) {
+        // Автокалибровка первых 30 кадров (500 мс)
+        if (!calibrated && calibrationCount < 30) {
+          calibrationSamples.push(eyebrowRaiseValue);
+          calibrationCount++;
+          if (calibrationCount === 30) {
+            neutralEyebrow = calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length;
+            calibrated = true;
+          }
+        }
+
+        // Перезапуск по мимике
+        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.03) {
           resetGame();
         }
       }
@@ -153,16 +176,20 @@
 
     function updateShip() {
       if (!ship.alive) return;
-      const sensitivity = 600; // чуть мягче
-      const neutral = 0.03;    // понижено!
-      const targetY = canvas.height / 2 - (eyebrowRaiseValue - neutral) * sensitivity;
-      ship.y += (targetY - ship.y) * 0.1; // плавное следование
+
+      // Теперь: чем БОЛЬШЕ eyebrowRaiseValue — тем ВЫШЕ корабль
+      const sensitivity = 1200; // высокая чувствительность
+      const offset = eyebrowRaiseValue - neutralEyebrow;
+      const targetY = canvas.height / 2 - offset * sensitivity;
+
+      // Плавное следование
+      ship.y += (targetY - ship.y) * 0.2;
       ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
     }
 
     function spawnObstacle() {
       if (Math.random() < 0.03 && ship.alive) {
-        const gap = 150;
+        const gap = 180; // чуть шире для удобства
         const topHeight = Math.random() * (canvas.height - gap - 100) + 50;
         obstacles.push({
           x: canvas.width,
@@ -170,16 +197,17 @@
           topHeight: topHeight,
           bottomY: topHeight + gap,
           bottomHeight: canvas.height - (topHeight + gap),
-          width: 40
+          width: 50
         });
       }
     }
 
     function checkCollision(obs) {
-      const shipLeft = ship.x - ship.radius;
-      const shipRight = ship.x + ship.radius;
-      const shipTop = ship.y - ship.radius;
-      const shipBottom = ship.y + ship.radius;
+      const r = ship.radius;
+      const shipLeft = ship.x - r;
+      const shipRight = ship.x + r;
+      const shipTop = ship.y - r;
+      const shipBottom = ship.y + r;
 
       const obsLeft = obs.x;
       const obsRight = obs.x + obs.width;
@@ -237,6 +265,9 @@
       obstacles = [];
       gameOverScreen.style.display = 'none';
       gameActive = true;
+      calibrated = false;
+      calibrationSamples = [];
+      calibrationCount = 0;
       gameLoop();
     }
 
@@ -244,13 +275,12 @@
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: { 
-            facingMode: 'user', 
+            facingMode: 'user',
             width: { ideal: 320 },
             height: { ideal: 240 }
           } 
         });
         video.srcObject = stream;
-
         startScreen.style.display = 'none';
         initFaceMesh();
 
@@ -270,10 +300,12 @@
           gameLoop();
         }, 1000);
       } catch (err) {
-        alert('Не удалось получить доступ к камере: ' + (err.message || 'разрешите доступ'));
+        alert('Ошибка камеры: разрешите доступ и обновите страницу.');
         console.error(err);
       }
     });
+
+    restartBtn.addEventListener('click', resetGame);
   </script>
 </body>
 </html>
