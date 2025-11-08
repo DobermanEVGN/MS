@@ -94,24 +94,28 @@
     resize();
 
     const shipRadius = 20;
-    const minGap = 90; // ≥ 2× диаметр корабля (40px) → 90px с запасом
+    const minGap = 90;
+    const obstacleSpacing = 400; // Увеличенное расстояние между препятствиями
 
     const ship = {
       x: 100,
       y: canvas.height / 2,
       radius: shipRadius,
-      alive: true
+      alive: true,
+      velocity: 0
     };
 
     let obstacles = [];
     let faceMesh;
     let camera;
     let eyebrowRaiseValue = 0.0;
+    let faceHeight = 0;
     let neutralEyebrow = 0.035;
     let gameActive = false;
     let calibrated = false;
     let calibrationSamples = [];
     let calibrationCount = 0;
+    let lastObstacleX = 0;
 
     function initFaceMesh() {
       faceMesh = new FaceMesh({
@@ -133,10 +137,19 @@
     function onFaceResults(results) {
       if (results.multiFaceLandmarks?.[0]) {
         const lm = results.multiFaceLandmarks[0];
-        // Проверка: используем надёжные точки
-        const leftRaise = lm[70].y - lm[55].y;   // верх - низ
-        const rightRaise = lm[300].y - lm[285].y;
-        eyebrowRaiseValue = (leftRaise + rightRaise) / 2;
+        
+        // Вычисляем высоту лица для относительного определения поднятия бровей
+        const chinY = lm[152].y; // точка подбородка
+        const foreheadY = lm[10].y; // точка лба
+        faceHeight = Math.abs(foreheadY - chinY);
+        
+        // Поднятие бровей относительно высоты лица
+        const leftEyebrow = (lm[70].y + lm[55].y) / 2; // средняя точка левой брови
+        const rightEyebrow = (lm[300].y + lm[285].y) / 2; // средняя точка правой брови
+        const eyebrowsY = (leftEyebrow + rightEyebrow) / 2;
+        
+        // Относительное положение бровей (чем меньше значение - тем выше брови)
+        eyebrowRaiseValue = (eyebrowsY - foreheadY) / faceHeight;
 
         if (!calibrated && calibrationCount < 20) {
           calibrationSamples.push(eyebrowRaiseValue);
@@ -147,7 +160,7 @@
           }
         }
 
-        if (!ship.alive && eyebrowRaiseValue > neutralEyebrow + 0.03) {
+        if (!ship.alive && eyebrowRaiseValue < neutralEyebrow - 0.05) {
           resetGame();
         }
       }
@@ -156,23 +169,43 @@
     function updateShip() {
       if (!ship.alive) return;
 
-      // Сбалансированная чувствительность
-      const sensitivity = 1000;
-      const offset = eyebrowRaiseValue - neutralEyebrow;
-      const targetY = canvas.height / 2 - offset * sensitivity;
-
-      // Плавное, но откликающееся движение
-      ship.y += (targetY - ship.y) * 0.25;
+      // Физика корабля: поднятие бровей создаёт подъёмную силу, но есть "гравитация"
+      const eyebrowInput = Math.max(0, (neutralEyebrow - eyebrowRaiseValue) * 5); // 0-1 значение поднятия бровей
+      
+      // Подъёмная сила при поднятии бровей
+      const liftForce = eyebrowInput * 0.8;
+      
+      // Гравитация (постоянная сила вниз)
+      const gravity = 0.4;
+      
+      // Обновление скорости: подъёмная сила против гравитации
+      ship.velocity += gravity - liftForce;
+      
+      // Ограничение максимальной скорости
+      ship.velocity = Math.max(-8, Math.min(8, ship.velocity));
+      
+      // Применение скорости к позиции
+      ship.y += ship.velocity;
+      
+      // Границы экрана
       ship.y = Math.max(ship.radius, Math.min(canvas.height - ship.radius, ship.y));
+      
+      // Демпфирование для плавности
+      ship.velocity *= 0.95;
     }
 
     function spawnObstacle() {
-      if (!ship.alive || Math.random() >= 0.025) return; // чуть реже
+      if (!ship.alive) return;
+      
+      // Проверяем расстояние от последнего препятствия
+      if (canvas.width - lastObstacleX < obstacleSpacing) return;
+      
+      // Случайный шанс появления, но с учётом расстояния
+      if (Math.random() >= 0.02) return;
 
       const availableHeight = canvas.height - minGap;
-      if (availableHeight < 100) return; // защита: экран слишком мал
+      if (availableHeight < 100) return;
 
-      // Минимальные отступы сверху и снизу — 40px
       const minTop = 40;
       const maxTop = availableHeight - 40;
       if (maxTop <= minTop) return;
@@ -186,6 +219,8 @@
         bottomHeight: canvas.height - (topHeight + minGap),
         width: 45
       });
+      
+      lastObstacleX = canvas.width;
     }
 
     function checkCollision(obs) {
@@ -247,8 +282,10 @@
 
     function resetGame() {
       ship.y = canvas.height / 2;
+      ship.velocity = 0;
       ship.alive = true;
       obstacles = [];
+      lastObstacleX = 0;
       gameOverScreen.style.display = 'none';
       gameActive = true;
       calibrated = false;
